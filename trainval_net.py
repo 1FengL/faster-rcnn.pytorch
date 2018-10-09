@@ -58,7 +58,7 @@ def parse_args():
                       default=10000, type=int)
 
   parser.add_argument('--save_dir', dest='save_dir',
-                      help='directory to save models', default="models",
+                      help='directory to save models', default="/srv/share/jyang375/models",
                       type=str)
   parser.add_argument('--nw', dest='num_workers',
                       help='number of worker to load data',
@@ -112,9 +112,9 @@ def parse_args():
                       help='checkpoint to load model',
                       default=0, type=int)
 # log and diaplay
-  parser.add_argument('--use_tfb', dest='use_tfboard',
-                      help='whether use tensorboard',
-                      action='store_true')
+  parser.add_argument('--use_tfboard', dest='use_tfboard',
+                      help='whether use tensorflow tensorboard',
+                      default=False, type=bool)
 
   args = parser.parse_args()
   return args
@@ -152,6 +152,11 @@ if __name__ == '__main__':
   print('Called with args:')
   print(args)
 
+  if args.use_tfboard:
+    from model.utils.logger import Logger
+    # Set the logger
+    logger = Logger('./logs')
+
   if args.dataset == "pascal_voc":
       args.imdb_name = "voc_2007_trainval"
       args.imdbval_name = "voc_2007_test"
@@ -174,6 +179,10 @@ if __name__ == '__main__':
       args.imdb_name = "vg_150-50-50_minitrain"
       args.imdbval_name = "vg_150-50-50_minival"
       args.set_cfgs = ['ANCHOR_SCALES', '[4, 8, 16, 32]', 'ANCHOR_RATIOS', '[0.5,1,2]', 'MAX_NUM_GT_BOXES', '50']
+  elif args.dataset == "surgerykit":
+      args.imdb_name = "surgerykit_trainval"
+      args.imdbval_name = "surgerykit_test"
+      args.set_cfgs = ['ANCHOR_SCALES', '[8, 16, 32]', 'ANCHOR_RATIOS', '[0.5,1,2]', 'MAX_NUM_GT_BOXES', '6']
 
   args.cfg_file = "cfgs/{}_ls.yml".format(args.net) if args.large_scale else "cfgs/{}.yml".format(args.net)
 
@@ -216,6 +225,7 @@ if __name__ == '__main__':
   im_info = torch.FloatTensor(1)
   num_boxes = torch.LongTensor(1)
   gt_boxes = torch.FloatTensor(1)
+
 
   # ship to cuda
   if args.cuda:
@@ -269,9 +279,6 @@ if __name__ == '__main__':
   elif args.optimizer == "sgd":
     optimizer = torch.optim.SGD(params, momentum=cfg.TRAIN.MOMENTUM)
 
-  if args.cuda:
-    fasterRCNN.cuda()
-
   if args.resume:
     load_name = os.path.join(output_dir,
       'faster_rcnn_{}_{}_{}.pth'.format(args.checksession, args.checkepoch, args.checkpoint))
@@ -289,11 +296,10 @@ if __name__ == '__main__':
   if args.mGPUs:
     fasterRCNN = nn.DataParallel(fasterRCNN)
 
-  iters_per_epoch = int(train_size / args.batch_size)
+  if args.cuda:
+    fasterRCNN.cuda()
 
-  if args.use_tfboard:
-    from tensorboardX import SummaryWriter
-    logger = SummaryWriter("logs")
+  iters_per_epoch = int(train_size / args.batch_size)
 
   for epoch in range(args.start_epoch, args.max_epochs + 1):
     # setting to train mode
@@ -321,7 +327,7 @@ if __name__ == '__main__':
 
       loss = rpn_loss_cls.mean() + rpn_loss_box.mean() \
            + RCNN_loss_cls.mean() + RCNN_loss_bbox.mean()
-      loss_temp += loss.item()
+      loss_temp += loss.data[0]
 
       # backward
       optimizer.zero_grad()
@@ -333,24 +339,24 @@ if __name__ == '__main__':
       if step % args.disp_interval == 0:
         end = time.time()
         if step > 0:
-          loss_temp /= (args.disp_interval + 1)
+          loss_temp /= args.disp_interval
 
         if args.mGPUs:
-          loss_rpn_cls = rpn_loss_cls.mean().item()
-          loss_rpn_box = rpn_loss_box.mean().item()
-          loss_rcnn_cls = RCNN_loss_cls.mean().item()
-          loss_rcnn_box = RCNN_loss_bbox.mean().item()
+          loss_rpn_cls = rpn_loss_cls.mean().data[0]
+          loss_rpn_box = rpn_loss_box.mean().data[0]
+          loss_rcnn_cls = RCNN_loss_cls.mean().data[0]
+          loss_rcnn_box = RCNN_loss_bbox.mean().data[0]
           fg_cnt = torch.sum(rois_label.data.ne(0))
           bg_cnt = rois_label.data.numel() - fg_cnt
         else:
-          loss_rpn_cls = rpn_loss_cls.item()
-          loss_rpn_box = rpn_loss_box.item()
-          loss_rcnn_cls = RCNN_loss_cls.item()
-          loss_rcnn_box = RCNN_loss_bbox.item()
+          loss_rpn_cls = rpn_loss_cls.data[0]
+          loss_rpn_box = rpn_loss_box.data[0]
+          loss_rcnn_cls = RCNN_loss_cls.data[0]
+          loss_rcnn_box = RCNN_loss_bbox.data[0]
           fg_cnt = torch.sum(rois_label.data.ne(0))
           bg_cnt = rois_label.data.numel() - fg_cnt
 
-        print("[session %d][epoch %2d][iter %4d/%4d] loss: %.4f, lr: %.2e" \
+	print("[session %d][epoch %2d][iter %4d/%4d] loss: %.4f, lr: %.2e" \
                                 % (args.session, epoch, step, iters_per_epoch, loss_temp, lr))
         print("\t\t\tfg/bg=(%d/%d), time cost: %f" % (fg_cnt, bg_cnt, end-start))
         print("\t\t\trpn_cls: %.4f, rpn_box: %.4f, rcnn_cls: %.4f, rcnn_box %.4f" \
@@ -363,22 +369,33 @@ if __name__ == '__main__':
             'loss_rcnn_cls': loss_rcnn_cls,
             'loss_rcnn_box': loss_rcnn_box
           }
-          logger.add_scalars("logs_s_{}/losses".format(args.session), info, (epoch - 1) * iters_per_epoch + step)
+          for tag, value in info.items():
+            logger.scalar_summary(tag, value, step)
 
         loss_temp = 0
         start = time.time()
 
-    
-    save_name = os.path.join(output_dir, 'faster_rcnn_{}_{}_{}.pth'.format(args.session, epoch, step))
-    save_checkpoint({
-      'session': args.session,
-      'epoch': epoch + 1,
-      'model': fasterRCNN.module.state_dict() if args.mGPUs else fasterRCNN.state_dict(),
-      'optimizer': optimizer.state_dict(),
-      'pooling_mode': cfg.POOLING_MODE,
-      'class_agnostic': args.class_agnostic,
-    }, save_name)
+    if args.mGPUs:
+      save_name = os.path.join(output_dir, 'faster_rcnn_{}_{}_{}.pth'.format(args.session, epoch, step))
+      save_checkpoint({
+        'session': args.session,
+        'epoch': epoch + 1,
+        'model': fasterRCNN.module.state_dict(),
+        'optimizer': optimizer.state_dict(),
+        'pooling_mode': cfg.POOLING_MODE,
+        'class_agnostic': args.class_agnostic,
+      }, save_name)
+    else:
+      save_name = os.path.join(output_dir, 'faster_rcnn_{}_{}_{}.pth'.format(args.session, epoch, step))
+      save_checkpoint({
+        'session': args.session,
+        'epoch': epoch + 1,
+        'model': fasterRCNN.state_dict(),
+        'optimizer': optimizer.state_dict(),
+        'pooling_mode': cfg.POOLING_MODE,
+        'class_agnostic': args.class_agnostic,
+      }, save_name)
     print('save model: {}'.format(save_name))
 
-  if args.use_tfboard:
-    logger.close()
+    end = time.time()
+    print(end - start)

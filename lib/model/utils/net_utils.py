@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -9,6 +11,7 @@ from model.roi_crop.functions.roi_crop import RoICropFunction
 import cv2
 import pdb
 import random
+import sys
 
 def save_net(fname, net):
     import h5py
@@ -42,18 +45,31 @@ def clip_gradient(model, clip_norm):
         if p.requires_grad:
             modulenorm = p.grad.data.norm()
             totalnorm += modulenorm ** 2
-    totalnorm = torch.sqrt(totalnorm).item()
-    norm = (clip_norm / max(totalnorm, clip_norm))
+    totalnorm = np.sqrt(totalnorm)
+
+    norm = clip_norm / max(totalnorm, clip_norm)
     for p in model.parameters():
         if p.requires_grad:
             p.grad.mul_(norm)
 
-def vis_detections(im, class_name, dets, thresh=0.8):
+def vis_detections(im, dir_name, class_dic, class_name, dets, thresh=0.8):
     """Visual debugging of detections."""
     for i in range(np.minimum(10, dets.shape[0])):
         bbox = tuple(int(np.round(x)) for x in dets[i, :4])
         score = dets[i, -1]
         if score > thresh:
+            """
+            #print out infos
+            print("#########################################")
+            print u"检测到物体：", class_dic[class_name], u"           概率：", score
+            print u"左上角坐标：", bbox[0:2], u"          右下角坐标:", bbox[2:4]
+            print("#########################################")
+            """
+            with open(dir_name, "a") as f:
+              f.writelines(class_dic[class_name]+'+'+str(score)+'+'+str(bbox[0:2])+'+'+str(bbox[2:4])+'\n')
+            
+            
+            
             cv2.rectangle(im, bbox[0:2], bbox[2:4], (0, 204, 0), 2)
             cv2.putText(im, '%s: %.3f' % (class_name, score), (bbox[0], bbox[1] + 15), cv2.FONT_HERSHEY_PLAIN,
                         1.0, (0, 0, 255), thickness=1)

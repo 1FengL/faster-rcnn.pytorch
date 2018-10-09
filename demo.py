@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*
 # --------------------------------------------------------
 # Tensorflow Faster R-CNN
 # Licensed under The MIT License [see LICENSE for details]
@@ -35,6 +37,8 @@ from model.utils.blob import im_list_to_blob
 from model.faster_rcnn.vgg16 import vgg16
 from model.faster_rcnn.resnet import resnet
 import pdb
+
+from PIL import Image, ImageDraw, ImageFont
 
 try:
     xrange          # Python 2
@@ -164,13 +168,20 @@ if __name__ == '__main__':
   load_name = os.path.join(input_dir,
     'faster_rcnn_{}_{}_{}.pth'.format(args.checksession, args.checkepoch, args.checkpoint))
 
-  pascal_classes = np.asarray(['__background__',
-                       'aeroplane', 'bicycle', 'bird', 'boat',
-                       'bottle', 'bus', 'car', 'cat', 'chair',
-                       'cow', 'diningtable', 'dog', 'horse',
-                       'motorbike', 'person', 'pottedplant',
-                       'sheep', 'sofa', 'train', 'tvmonitor'])
-
+  pascal_classes = np.asarray(['__background__',  # always index 0
+                         'StitchScissor', 'NeedleHolder', 'ScalpelHandel',
+                         'AllisTissueForceps', 'SmoothForceps', 
+                         'TissueScissor', 'HemostaticForceps'])
+  class_dic = {'StitchScissor': "线剪",
+         'NeedleHolder': "持针器",
+         'ScalpelHandel':  "手术刀柄",
+         'AllisTissueForceps': "组织钳",
+         'SmoothForceps': "手术镊",
+         'TissueScissor': "组织剪",
+         'HemostaticForceps': "止血钳",
+         }
+  
+  
   # initilize the network here.
   if args.net == 'vgg16':
     fasterRCNN = vgg16(pascal_classes, pretrained=False, class_agnostic=args.class_agnostic)
@@ -347,8 +358,14 @@ if __name__ == '__main__':
             cls_dets = cls_dets[order]
             keep = nms(cls_dets, cfg.TEST.NMS, force_cpu=not cfg.USE_GPU_NMS)
             cls_dets = cls_dets[keep.view(-1).long()]
+            
+           
             if vis:
-              im2show = vis_detections(im2show, pascal_classes[j], cls_dets.cpu().numpy(), 0.5)
+              if webcam_num == -1:
+                dir_name = os.path.join(args.image_dir, imglist[num_images][:-4] + "_info.txt")
+              else:
+                dir_name = os.path.join(args.image_dir, "webcam_info.txt")
+              im2show = vis_detections(im2show, dir_name, class_dic, pascal_classes[j], cls_dets.cpu().numpy(), 0.8)
 
       misc_toc = time.time()
       nms_time = misc_toc - misc_tic
@@ -364,8 +381,25 @@ if __name__ == '__main__':
           result_path = os.path.join(args.image_dir, imglist[num_images][:-4] + "_det.jpg")
           cv2.imwrite(result_path, im2show)
       else:
-          im2showRGB = cv2.cvtColor(im2show, cv2.COLOR_BGR2RGB)
-          cv2.imshow("frame", im2showRGB)
+          #im2showRGB = cv2.cvtColor(im2show, cv2.COLOR_BGR2RGB)
+          im2show_pad = cv2.copyMakeBorder(im2show, 0,100,0,0, cv2.BORDER_CONSTANT,value=[255,255,255])
+          pilimg = Image.fromarray(im2show_pad)
+          draw = ImageDraw.Draw(pilimg)
+          font = ImageFont.truetype('lib/ChineseFont/SIMYOU.TTF', 15, encoding="utf-8")
+          try:
+            with open(os.path.join(args.image_dir, "webcam_info.txt")) as f:
+              for idx,line in enumerate(f):
+                a,b,c,d = line.strip().split("+")
+                draw.text((0,485+idx*15), unicode('检测到：%s,  概率：%s, 左上角：%s  右上角：%s' % (a,b,c,d),'UTF-8'),(0, 0, 0),font=font)
+          except:
+            draw.text((0,485), unicode('没有检测到机械','UTF-8'),(0, 0, 0),font=font)
+          im2showRGB_pad = cv2.cvtColor(np.array(pilimg), cv2.COLOR_BGR2RGB)
+          cv2.imshow("frame", im2showRGB_pad)
+          #mygui.refreshing(im_in, im2showRGB, os.path.join(args.image_dir, "webcam_info.txt"))
+          try:
+            os.remove(os.path.join(args.image_dir, "webcam_info.txt"))
+          except:
+            pass
           total_toc = time.time()
           total_time = total_toc - total_tic
           frame_rate = 1 / total_time

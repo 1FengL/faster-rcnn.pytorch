@@ -15,8 +15,15 @@ from datasets.pascal_voc import pascal_voc
 from datasets.coco import coco
 from datasets.imagenet import imagenet
 from datasets.vg import vg
+from datasets.surgerykit import surgerykit
 
 import numpy as np
+
+#Set up surgerykit
+surgerykit_devkit_path = '/home/moxian/lyf/faster-rcnn.pytorch/data/surgerykitdevkit'
+for split in ['train', 'val', 'trainval', 'test']:
+  name = '{}_{}'.format('surgerykit', split)
+  __sets[name] = (lambda split=split: surgerykit(split, surgerykit_devkit_path))
 
 # Set up voc_<year>_<split>
 for year in ['2007', '2012']:
